@@ -14,11 +14,8 @@ import com.thomsonreuters.upa.transport.TransportReturnCodes;
 public class Upa {
 
 	private static Logger LOG = LogManager.getLogger (Upa.class.getName());
-	private static final String LINE_SEPARATOR = System.getProperty ("line.separator");
 
 	private Config config;
-
-	private static final String RSSL_PROTOCOL       = "rssl";
 
 	public Upa (Config config) {
 		this.config = config;
