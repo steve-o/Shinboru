@@ -90,10 +90,6 @@ public class Shinboru implements Provider.Delegate {
 	private static final String HELP_OPTION			= "help";
 	private static final String VERSION_OPTION		= "version";
 
-	private static final String SESSION_NAME		= "Session";
-	private static final String CONNECTION_NAME		= "Connection";
-	private static final String PROVIDER_NAME		= "Provider";
-
 	private static Options buildOptions() {
 		Options opts = new Options();
 
@@ -189,7 +185,7 @@ public class Shinboru implements Provider.Delegate {
 				}
 
 /* Minimum parameters to construct session configuration */
-				SessionConfig session_config = new SessionConfig (SESSION_NAME, CONNECTION_NAME, PROVIDER_NAME, protocol, servers, service_name);
+				SessionConfig session_config = new SessionConfig (protocol, servers, service_name);
 
 /* Optional session parameters: */
 				if (!Strings.isNullOrEmpty (parsed.getUserInfo()))

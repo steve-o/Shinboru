@@ -5,15 +5,6 @@ import com.google.common.base.Optional;
 import com.google.gson.Gson;
 
 public class SessionConfig {
-//  RFA session name, one session contains a horizontal scaling set of connections.
-	private String session_name;
-
-//  RFA connection name, used for logging.
-	private String connection_name;
-
-//  RFA provider name.
-	private String provider_name;
-
 //  Protocol name, RSSL or SSL.
 	private String protocol;
 
@@ -56,10 +47,7 @@ public class SessionConfig {
 	private Optional<String> field_dictionary;
 	private Optional<String> enum_dictionary;
 
-	public SessionConfig (String session_name, String connection_name, String provider_name, String protocol, String[] servers, String service_name) {
-		this.session_name = session_name;
-		this.connection_name = connection_name;
-		this.provider_name = provider_name;
+	public SessionConfig (String protocol, String[] servers, String service_name) {
 		this.protocol = protocol;
 		this.servers = servers;
 		this.service_name = service_name;
@@ -70,18 +58,6 @@ public class SessionConfig {
 		this.position = Optional.absent();
 		this.field_dictionary = Optional.absent();
 		this.enum_dictionary = Optional.absent();
-	}
-
-	public String getSessionName() {
-		return this.session_name;
-	}
-
-	public String getConnectionName() {
-		return this.connection_name;
-	}
-
-	public String getProviderName() {
-		return this.provider_name;
 	}
 
 	public String getProtocol() {
