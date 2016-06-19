@@ -1,4 +1,4 @@
-/* RFA based broadcast publisher.
+/* UPA based broadcast publisher.
  */
 
 import java.io.*;
@@ -21,49 +21,49 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.net.InetAddresses;
 import com.google.common.primitives.UnsignedInts;
-import com.reuters.rfa.common.Context;
-import com.reuters.rfa.common.DeactivatedException;
-import com.reuters.rfa.common.Dispatchable;
-import com.reuters.rfa.common.DispatchException;
-import com.reuters.rfa.common.EventQueue;
-import com.reuters.rfa.common.Handle;
-import com.reuters.rfa.common.PublisherPrincipalIdentity;
-import com.reuters.rfa.config.ConfigDb;
-import com.reuters.rfa.dictionary.DataDef;
-import com.reuters.rfa.dictionary.DataDefDictionary;
-import com.reuters.rfa.omm.OMMEncoder;
-import com.reuters.rfa.omm.OMMFieldList;
-import com.reuters.rfa.omm.OMMMap;
-import com.reuters.rfa.omm.OMMMapEntry;
-import com.reuters.rfa.omm.OMMMsg;
-import com.reuters.rfa.omm.OMMState;
-import com.reuters.rfa.omm.OMMTypes;
-import com.reuters.rfa.rdm.RDMInstrument;
-import com.reuters.rfa.rdm.RDMMsgTypes;
-import com.reuters.rfa.session.Session;
+import com.thomsonreuters.upa.codec.Buffer;
+import com.thomsonreuters.upa.codec.CodecFactory;
+import com.thomsonreuters.upa.codec.CodecReturnCodes;
+import com.thomsonreuters.upa.codec.DataStates;
+import com.thomsonreuters.upa.codec.DataTypes;
+import com.thomsonreuters.upa.codec.DecodeIterator;
+import com.thomsonreuters.upa.codec.EncodeIterator;
+import com.thomsonreuters.upa.codec.FieldEntry;
+import com.thomsonreuters.upa.codec.FieldList;
+import com.thomsonreuters.upa.codec.FieldListFlags;
+import com.thomsonreuters.upa.codec.MapEntryActions;
+import com.thomsonreuters.upa.codec.MapFlags;
+import com.thomsonreuters.upa.codec.Msg;
+import com.thomsonreuters.upa.codec.MsgClasses;
+import com.thomsonreuters.upa.codec.MsgKeyFlags;
+import com.thomsonreuters.upa.codec.RefreshMsg;
+import com.thomsonreuters.upa.codec.RefreshMsgFlags;
+import com.thomsonreuters.upa.codec.StateCodes;
+import com.thomsonreuters.upa.codec.StreamStates;
+import com.thomsonreuters.upa.rdm.InstrumentNameTypes;
+import com.thomsonreuters.upa.transport.Channel;
+import com.thomsonreuters.upa.transport.TransportBuffer;
+
 
 public class Shinboru implements Provider.Delegate {
 
 /* Application configuration. */
 	private Config config;
 
-/* RFA context. */
-	private Rfa rfa;
+/* UPA context. */
+	private Upa upa;
 
-/* RFA asynchronous event queue. */
-	private EventQueue event_queue;
-
-/* RFA provider */
+/* UPA provider */
 	private Provider provider;
 
-/* Identifier for this running application instance. */
-	private PublisherPrincipalIdentity identity;
+/* Identifier for this running application instance, cannot use PostUserInfo as it is an interface. */
+	private long publisher_address;
+	private long publisher_id;
 
 /* Instrument list. */
 	private List<ItemStream> streams;
 
 	private static Logger LOG = LogManager.getLogger (Shinboru.class.getName());
-	private static Logger RFA_LOG = LogManager.getLogger ("com.reuters.rfa");
 
 	private static final String RSSL_PROTOCOL		= "rssl";
 
@@ -74,7 +74,7 @@ public class Shinboru implements Provider.Delegate {
 	private static final short  DICTIONARY_ID		= 1;
 	private static final short  FIELD_LIST_ID		= 3;
 
-	private static final int    OMM_PAYLOAD_SIZE            = 65535;
+	private static final int MAX_MSG_SIZE			= 4096;
 
 	private static final boolean USE_DATA_DEFINITIONS	= true;
 
@@ -151,10 +151,10 @@ public class Shinboru implements Provider.Delegate {
 		return query_pairs;
 	}
 
-	private void init (CommandLine line, Options options) throws Exception {
+	private boolean Initialize (CommandLine line, Options options) throws Exception {
 		if (line.hasOption (HELP_OPTION)) {
 			printHelp (options);
-			return;
+			return false;
 		}
 
 /* Configuration. */
@@ -258,42 +258,30 @@ public class Shinboru implements Provider.Delegate {
 
 		LOG.debug (this.config.toString());
 
-/* RFA Logging. */
-// Remove existing handlers attached to j.u.l root logger
-		SLF4JBridgeHandler.removeHandlersForRootLogger();
-// add SLF4JBridgeHandler to j.u.l's root logger
-		SLF4JBridgeHandler.install();
-
-		if (RFA_LOG.isDebugEnabled()) {
-			java.util.logging.Logger rfa_logger = java.util.logging.Logger.getLogger ("com.reuters.rfa");
-			rfa_logger.setLevel (java.util.logging.Level.FINE);
+/* UPA Context. */
+		this.upa = new Upa (this.config);
+		if (!this.upa.Initialize()) {
+			return false;
 		}
 
-/* RFA Context. */
-		this.rfa = new Rfa (this.config);
-		this.rfa.init();
-
-/* RFA asynchronous event queue. */
-		this.event_queue = EventQueue.create (this.config.getEventQueueName());
-
-/* RFA provider */
+/* UPA provider */
 		this.provider = new Provider (this.config.getSession(),
-					this.rfa,
-					this.event_queue,
+					this.upa,
 					this /* Provider.delegate */);
-		this.provider.init();
+		if (!this.provider.Initialize()) {
+			return false;
+		}
 
 /* Define this running instance identity. */
-		this.identity = new PublisherPrincipalIdentity();
-		this.identity.setPublisherAddress (UnsignedInts.toLong (InetAddresses.coerceToInteger (InetAddress.getLocalHost())));
+		this.publisher_address = UnsignedInts.toLong (InetAddresses.coerceToInteger (InetAddress.getLocalHost()));
 		{
 /* pre-Java 9: ProcessHandle.current().getPid() */
 			RuntimeMXBean runtimeBean = ManagementFactory.getRuntimeMXBean();
 			String jvmName = runtimeBean.getName();
 			long pid = Long.valueOf (jvmName.split("@")[0]);
-			this.identity.setPublisherId (pid);
+			this.publisher_id = pid;
 		}
-		LOG.info ("Publisher identity: {}", this.identity);
+		LOG.info ("Publisher identity: {\"address\": {}, \"id\": {}}", this.publisher_address, this.publisher_id);
 
 /* Create state for published RIC. */
 		this.streams = new ArrayList<ItemStream> (instruments.size());
@@ -304,6 +292,7 @@ public class Shinboru implements Provider.Delegate {
 			LOG.trace (instrument.toString());
 		}
 
+		return true;
 	}
 
 /* LOG4J2 logging is terminated by an installed shutdown hook.	This hook can
@@ -321,19 +310,8 @@ public class Shinboru implements Provider.Delegate {
 		}
 		@Override
 		public void run() {
-			if (null != this.app
-				&& null != this.app.event_queue
-				&& this.app.event_queue.isActive())
-			{
-				this.app.event_queue.deactivate();
-				try {
-					LOG.trace ("Waiting for mainloop shutdown ...");
-					while (!this.app.is_shutdown) {
-						Thread.sleep (100);
-					}
-					LOG.trace ("Shutdown complete.");
-				} catch (InterruptedException e) {}
-			}
+			setName ("shutdown");
+/* TBD: exit mainloop */
 /* LOG4J2-318 to manually shutdown.
  */
 			if (context.isStarted()
@@ -346,7 +324,7 @@ public class Shinboru implements Provider.Delegate {
 	}
 
 	private void run (CommandLine line, Options options) throws Exception {
-		this.init (line, options);
+		this.Initialize (line, options);
 		Thread shutdown_hook = new ShutdownThread (this);
 		Runtime.getRuntime().addShutdownHook (shutdown_hook);
 		LOG.trace ("Shutdown hook installed.");
@@ -355,132 +333,169 @@ public class Shinboru implements Provider.Delegate {
 /* Cannot remove hook if shutdown is in progress. */
 //		Runtime.getRuntime().removeShutdownHook (shutdown_hook);
 //		LOG.trace ("Removed shutdown hook.");
-		this.clear();
+		this.Close();
 		this.is_shutdown = true;
 	}
 
 	public volatile boolean is_shutdown = false;
 
-	private void drainqueue() {
-		LOG.trace ("Draining event queue.");
-		int count = 0;
-		try {
-			while (this.event_queue.dispatch (Dispatchable.NO_WAIT) > 0) { ++count; }
-			LOG.trace ("Queue contained {} events.", count);
-		} catch (DeactivatedException e) {
-/* ignore on empty queue */
-			if (count > 0) LOG.catching (e);
-		} catch (Exception e) {
-			LOG.catching (e);
-		}
-	}
-
 	private void mainloop() {
-		try {
-			while (this.event_queue.isActive()) {
-				this.event_queue.dispatch (Dispatchable.INFINITE_WAIT);
-			}
-		} catch (DeactivatedException e) {
-/* manual shutdown */
-			LOG.trace ("Mainloop deactivated.");
-		} catch (Throwable t) {
-			LOG.catching (t);
-		} finally {
-			if (!this.event_queue.isActive()) this.event_queue.deactivate();
-			this.drainqueue();
-		}
+		LOG.trace ("Waiting ...");
+		this.provider.Run();
+		LOG.trace ("Mainloop deactivated.");
 	}
 
 /* Publish response for registered item stream. */
 	@Override
-	public void OnRequest (ItemStream stream, OMMEncoder encoder, OMMMsg msg, OMMState state) {
+	public boolean OnRequest (Channel c, int service_id, ItemStream stream, EncodeIterator it, TransportBuffer buf) {
 		SymbolListStream symbol_list_stream = (SymbolListStream)stream;
+		final RefreshMsg msg = (RefreshMsg)CodecFactory.createMsg();
 
-		msg.setMsgType (OMMMsg.MsgType.REFRESH_RESP);
-		msg.setIndicationFlags (OMMMsg.Indication.REFRESH_COMPLETE);
-		msg.setRespTypeNum (OMMMsg.RespType.UNSOLICITED);
-		msg.setPrincipalIdentity (this.identity);
+		msg.msgClass (MsgClasses.REFRESH);
+		msg.flags (RefreshMsgFlags.HAS_MSG_KEY | RefreshMsgFlags.REFRESH_COMPLETE | RefreshMsgFlags.HAS_POST_USER_INFO);
+/* Set the message model type. */
+		msg.domainType (stream.getMsgModelType());
+/* Set the item stream token. */
+		msg.streamId (stream.getToken());
+		msg.containerType (DataTypes.MAP);
 
-		state.setStreamState (OMMState.Stream.OPEN);
-		state.setDataState (OMMState.Data.OK);
-		state.setCode (OMMState.Code.NONE);
-		msg.setState (state);
+/* In RFA lingo an attribute object. */
+		msg.msgKey().flags (MsgKeyFlags.HAS_SERVICE_ID | MsgKeyFlags.HAS_NAME_TYPE | MsgKeyFlags.HAS_NAME);
+		msg.msgKey().serviceId (service_id);
+		msg.msgKey().nameType (InstrumentNameTypes.RIC);
+		final Buffer rssl_buffer = CodecFactory.createBuffer();
+		rssl_buffer.data (stream.getItemName());
+		msg.msgKey().name (rssl_buffer);
 
-		encoder.initialize (OMMTypes.MSG, OMM_PAYLOAD_SIZE);
-		encoder.encodeMsgInit (msg, OMMTypes.NO_DATA, OMMTypes.MAP);
+		msg.postUserInfo().userAddr (this.publisher_address);
+		msg.postUserInfo().userId (this.publisher_id);
 
-		if (USE_DATA_DEFINITIONS)
-		{
-			encoder.encodeMapInit (OMMMap.HAS_DATA_DEFINITIONS | OMMMap.HAS_TOTAL_COUNT_HINT,
-						OMMTypes.BUFFER /* key data type */, OMMTypes.FIELD_LIST /* value data type */,
-						symbol_list_stream.getSymbols().size() /* total count hint */,
-						(short)0 /* ignored */);
-/* data definitions */
-			encoder.encodeDataDefsInit();
-			DataDefDictionary dictionary = DataDefDictionary.create (OMMTypes.FIELD_LIST_DEF_DB);
-			DataDef dataDef = DataDef.create ((short)0 /* magic number */, OMMTypes.FIELD_LIST_DEF);
-			dataDef.addDef ((short)3422, OMMTypes.RMTES_STRING);
-			dictionary.putDataDef (dataDef);
-			DataDefDictionary.encodeDataDef (dictionary, encoder, (short)0 /* magic number */);
-			encoder.encodeDataDefsComplete();
-			for (String symbol : symbol_list_stream.getSymbols()) {
-				encoder.encodeMapEntryInit (0 /* flags */, OMMMapEntry.Action.ADD, null /* ignored */);
-/* the key */
-				encoder.encodeBytes (symbol.getBytes());
-/* the value */
-				encoder.encodeFieldListInit (OMMFieldList.HAS_DATA_DEF_ID | OMMFieldList.HAS_DEFINED_DATA,
-								DICTIONARY_ID, FIELD_LIST_ID,
-								(short)0 /* magic number */);
-				encoder.encodeRmtesString (symbol);
-			}
-			encoder.encodeAggregateComplete();
-		}
-		else
-		{
-			encoder.encodeMapInit (OMMMap.HAS_TOTAL_COUNT_HINT,
-						OMMTypes.BUFFER /* key data type */, OMMTypes.FIELD_LIST /* value data type */,
-						symbol_list_stream.getSymbols().size() /* total count hint */,
-						(short)0 /* ignored */);
-			for (String symbol : symbol_list_stream.getSymbols()) {
-				encoder.encodeMapEntryInit (0 /* flags */, OMMMapEntry.Action.ADD, null /* ignored */);
-/* the key */
-				encoder.encodeBytes (symbol.getBytes());
-/* the value */
-				encoder.encodeFieldListInit (OMMFieldList.HAS_STANDARD_DATA, DICTIONARY_ID, FIELD_LIST_ID, (short)0 /* ignored */);
-				encoder.encodeFieldEntryInit ((short)3422, OMMTypes.RMTES_STRING);
-				encoder.encodeRmtesString (symbol);
-				encoder.encodeAggregateComplete();
-			}
-			encoder.encodeAggregateComplete();
+		msg.state().streamState (StreamStates.OPEN);
+		msg.state().dataState (DataStates.OK);
+		msg.state().code (StateCodes.NONE);
+
+		int rc = msg.encodeInit (it, MAX_MSG_SIZE);
+		if (CodecReturnCodes.ENCODE_CONTAINER != rc) {
+			LOG.error ("Msg.encodeInit: { \"returnCode\": {}, \"enumeration\": \"{}\", \"text\": \"{}\" }",
+				rc, CodecReturnCodes.toString (rc), CodecReturnCodes.info (rc));
+			return false;
 		}
 
-		this.provider.send (stream, (OMMMsg)encoder.getEncodedObject());
+		{
+			final com.thomsonreuters.upa.codec.Map map = CodecFactory.createMap();
+			map.clear();
+			map.flags (MapFlags.HAS_TOTAL_COUNT_HINT);
+			map.totalCountHint (symbol_list_stream.getSymbols().size());
+			map.keyPrimitiveType (DataTypes.BUFFER);
+			map.containerType (DataTypes.FIELD_LIST);
+			rc = map.encodeInit (it, 0, 0);
+			if (CodecReturnCodes.SUCCESS != rc) {
+				LOG.error ("Map.encodeInit: { \"returnCode\": {}, \"enumeration\": \"{}\", \"text\": \"{}\" }",
+					rc, CodecReturnCodes.toString (rc), CodecReturnCodes.info (rc));
+				return false;
+			}
+
+			final com.thomsonreuters.upa.codec.MapEntry map_entry = CodecFactory.createMapEntry();
+			map_entry.clear();
+			map_entry.action (MapEntryActions.ADD);
+			FieldList field_list = CodecFactory.createFieldList();
+			FieldEntry field_entry = CodecFactory.createFieldEntry();
+			
+			for (String symbol : symbol_list_stream.getSymbols()) {
+				rssl_buffer.data (symbol);
+				rc = map_entry.encodeInit (it, rssl_buffer, 0 /* max size */);
+				if (CodecReturnCodes.SUCCESS != rc) {
+					LOG.error ("MapEntry.encodeInit: { \"returnCode\": {}, \"enumeration\": \"{}\", \"text\": \"{}\" }",
+						rc, CodecReturnCodes.toString (rc), CodecReturnCodes.info (rc));
+					return false;
+				}
+
+				field_list.clear();
+				field_list.flags (FieldListFlags.HAS_STANDARD_DATA | FieldListFlags.HAS_FIELD_LIST_INFO);
+				field_list.dictionaryId (DICTIONARY_ID);
+				field_list.fieldListNum (FIELD_LIST_ID);
+				rc = field_list.encodeInit (it, null /* dictionary */, 0 /* max size */);
+				if (CodecReturnCodes.SUCCESS != rc) {
+					LOG.error ("FieldList.encodeInit: { \"returnCode\": {}, \"enumeration\": \"{}\", \"text\": \"{}\" }",
+						rc, CodecReturnCodes.toString (rc), CodecReturnCodes.info (rc));
+					return false;
+				}
+
+				field_entry.clear();
+				field_entry.fieldId (3422);
+				field_entry.dataType (DataTypes.RMTES_STRING);
+				rc = field_entry.encode (it, rssl_buffer);
+				if (CodecReturnCodes.SUCCESS != rc) {
+					LOG.error ("FieldEntry.encode: { \"returnCode\": {}, \"enumeration\": \"{}\", \"text\": \"{}\" }",
+						rc, CodecReturnCodes.toString (rc), CodecReturnCodes.info (rc));
+					return false;
+				}
+
+				rc = field_list.encodeComplete (it, true /* commit */);
+				if (CodecReturnCodes.SUCCESS != rc) {
+					LOG.error ("FieldList.encodeComplete: { \"returnCode\": {}, \"enumeration\": \"{}\", \"text\": \"{}\" }",
+						rc, CodecReturnCodes.toString (rc), CodecReturnCodes.info (rc));
+					return false;
+				}
+
+				rc = map_entry.encodeComplete (it, true /* commit */);
+				if (CodecReturnCodes.SUCCESS != rc) {
+					LOG.error ("MapEntry.encodeComplete: { \"returnCode\": {}, \"enumeration\": \"{}\", \"text\": \"{}\" }",
+						rc, CodecReturnCodes.toString (rc), CodecReturnCodes.info (rc));
+					return false;
+				}
+			}
+
+			rc = map.encodeComplete (it, true /* commit */);
+			if (CodecReturnCodes.SUCCESS != rc) {
+				LOG.error ("Map.encodeComplete: { \"returnCode\": {}, \"enumeration\": \"{}\", \"text\": \"{}\" }",
+					rc, CodecReturnCodes.toString (rc), CodecReturnCodes.info (rc));
+				return false;
+			}
+		}
+
+		rc = msg.encodeComplete (it, true /* commit */);
+		if (CodecReturnCodes.SUCCESS != rc) {
+			LOG.error ("Msg.encodeComplete: { \"returnCode\": {}, \"enumeration\": \"{}\", \"text\": \"{}\" }",
+				rc, CodecReturnCodes.toString (rc), CodecReturnCodes.info (rc));
+			return false;
+		}
+
+		if (LOG.isDebugEnabled()) {
+			final DecodeIterator jt = CodecFactory.createDecodeIterator();
+			jt.clear();
+			rc = jt.setBufferAndRWFVersion (buf, c.majorVersion(), c.minorVersion());
+			if (CodecReturnCodes.SUCCESS != rc) {
+				LOG.warn ("DecodeIterator.setBufferAndRWFVersion: { \"returnCode\": {}, \"enumeration\": \"{}\", \"text\": \"{}\" }",
+					rc, CodecReturnCodes.toString (rc), CodecReturnCodes.info (rc));
+			} else {
+				LOG.debug ("{}", msg.decodeToXml (jt));
+			}
+		}
+/* Message validation. */
+		if (!msg.validateMsg()) {
+			LOG.error ("Msg.validateMsg failed.");
+			return false;
+		}
+
+		if (0 == this.provider.Submit (c, buf)) {
+			return false;
+		} else {
+			return true;
+		}
 	}
 
-	private void clear() {
-/* Prevent new events being generated whilst shutting down. */
-		if (null != this.event_queue && this.event_queue.isActive()) {
-			LOG.trace ("Deactivating EventQueue.");
-			this.event_queue.deactivate();
-			this.drainqueue();
-		}
-
+	private void Close() {
 		if (null != this.provider) {
 			LOG.trace ("Closing Provider.");
-			this.provider.clear();
+			this.provider.Close();
 			this.provider = null;
 		}
 
-		if (null != this.event_queue) {
-			LOG.trace ("Closing EventQueue.");
-			this.event_queue.destroy();
-			this.event_queue = null;
-		}
-
-		if (null != this.rfa) {
-			LOG.trace ("Closing RFA.");
-			this.rfa.clear();
-			this.rfa = null;
+		if (null != this.upa) {
+			LOG.trace ("Closing UPA.");
+			this.upa.Close();
+			this.upa = null;
 		}
 	}
 

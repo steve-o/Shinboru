@@ -3,8 +3,7 @@
 JAVAC="javac"
 export JAVAC
 
-RFA=../third-party/rfa.jar
-RFA_VALUEADD=../third-party/ValueAdd_DomainRep.jar
+UPA=../third-party/upa.jar
 
 # Apache Commons command-line-processor
 COMMONS_CLI=../third-party/commons-cli-1.2.jar
@@ -21,7 +20,7 @@ SLF4JAPI=../third-party/slf4j-api-1.7.12.jar
 SLF4JBINDING=../third-party/log4j-slf4j-impl-2.0.jar
 LOG4J2=$LOG4J2:$SLF4JBINDING:$SLF4JAPI:$JAVAUTILLOGGINGAPI
 
-CLASSPATH=.:$COMMONS_CLI:$GUAVA:$GSON:$LOG4J2:$RFA:$RFA_VALUEADD
+CLASSPATH=.:$COMMONS_CLI:$GUAVA:$GSON:$LOG4J2:$UPA
 export CLASSPATH
 
 $JAVAC *.java

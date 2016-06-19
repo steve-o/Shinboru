@@ -6,7 +6,6 @@
     </Console>
   </Appenders>
   <Loggers>
-    <Logger name="com.reuters.rfa" level="warn"/>
     <Root level="trace">
       <AppenderRef ref="Console"/>
     </Root>

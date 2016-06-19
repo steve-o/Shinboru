@@ -2,19 +2,18 @@
  */
 
 import com.google.common.base.Optional;
-import com.reuters.rfa.common.Token;
 
 public class ItemStream {
 /* Fixed name for this stream. */
 	private String item_name;
 
 /* RDM domain */
-	private short mmt;
+	private int mmt;
 
 /* Session token. */
-	private Optional<Token> token;
+	private Optional<Integer> token;
 
-	public ItemStream (String item_name, short mmt) {
+	public ItemStream (String item_name, int mmt) {
 		this.item_name = item_name;
 		this.mmt = mmt;
 		this.clearToken();
@@ -24,11 +23,11 @@ public class ItemStream {
 		return this.item_name;
 	}
 
-	public short getMsgModelType() {
+	public int getMsgModelType() {
 		return this.mmt;
 	}
 
-	public Token getToken() {
+	public int getToken() {
 		return this.token.get();
 	}
 
@@ -36,7 +35,7 @@ public class ItemStream {
 		return this.token.isPresent();
 	}
 
-	public void setToken (Token token) {
+	public void setToken (int token) {
 		this.token = Optional.of (token);
 	}
 
