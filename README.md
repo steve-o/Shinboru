@@ -1,4 +1,4 @@
-Simple Java RDM Symbol List publisher in RFA, provides a single symbol list populated by the first column of a CSV file.
+Simple Java RDM Symbol List publisher in UPA, provides a single symbol list populated by the first column of a CSV file.
 
 usage:
 
