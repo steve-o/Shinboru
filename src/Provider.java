@@ -116,10 +116,7 @@ public class Provider {
 /* Pending messages to flush. */
 	int pending_count;
 
-/* Data dictionaries. */
-	private DataDictionary rdm_dictionary;
-	private BiMap<String, Integer> dictionary_tokens;
-
+/* Callback interface for publishing universe on service "operationally up". */
 	public interface Delegate {
 		public boolean OnRequest (Channel c, int service_id, ItemStream stream, EncodeIterator it, TransportBuffer buf);
 	}
@@ -128,25 +125,25 @@ public class Provider {
 
 /* Watchlist of all items. */
 	private Map<String, ItemStream> directory;
-	private Map<Integer, ItemStream> tokens;
 
-/* Service name to id map  */
-	private ImmutableBiMap<String, Integer> service_map;
-
+/* The integer number the service name is mapped to in the source directory. */
 	private int service_id;
 
 /* incrementing unique id for streams */
 	int token;
+	int login_token;	/* should always be -1 */
 	int directory_token;
-	int login_token;	/* should always be 1 */
+	private BiMap<String, Integer> dictionary_tokens;
+
 /* RSSL keepalive state. */
 	Instant next_ping;
 	Instant next_pong;
 	int ping_interval;	/* seconds */
 
-	private ImmutableMap<String, Integer> appendix_a;
-
 	private Instant last_activity;
+
+/* Data dictionaries. */
+	private DataDictionary rdm_dictionary;
 
 /* Reuters Wire Format versions. */
 	private byte rwf_major_version;
@@ -155,9 +152,6 @@ public class Provider {
 	private boolean is_muted;
 	private boolean pending_dictionary;
 
-	private int retry_timer_ms;
-	private int retry_limit;
-
 	private static final boolean CLOSE_ON_SHUTDOWN = false;
 	private static final boolean UNSUBSCRIBE_ON_SHUTDOWN = false;
 
@@ -165,8 +159,6 @@ public class Provider {
 
 	private static final int MAX_MSG_SIZE			= 4096;
 	private static final int DEFAULT_RSSL_PORT		= 14003;	/* non-interactive */
-	private static final int DEFAULT_RETRY_TIMER_MS		= 60000;
-	private static final int DEFAULT_RETRY_LIMIT		= 0;
 	private static final int DEFAULT_STREAM_IDENTIFIER	= -1;		/* non-interactive */
 	private static final int INVALID_STREAM_IDENTIFIER	= 0;
 
@@ -228,12 +220,15 @@ public class Provider {
 		}
 
 		this.directory = new LinkedHashMap<String, ItemStream>();
-		this.tokens = new LinkedHashMap<>();
 		this.dictionary_tokens = HashBiMap.create();
 		this.rdm_dictionary = CodecFactory.createDataDictionary();
 		return true;
 	}
 
+/* Tokens are valid for the duration of an active session, for non-interactive
+ * providers they should be negative, for interactive providers and consumers
+ * they should be positive.
+ */
 	private int GenerateToken() {
 		return this.token--;
 	}
@@ -367,6 +362,7 @@ public class Provider {
 		return did_work;
 	}
 
+/* Basic round-robin cold-standby failover support. */
 	private int server_idx = -1;
 
 	private String server() {
