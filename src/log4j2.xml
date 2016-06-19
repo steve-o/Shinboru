@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration>
+  <Appenders>
+    <Console name="Console" target="SYSTEM_OUT">
+      <PatternLayout pattern="%highlight{%d %-5p [%t] %c{1}(%F:%L): %m%n%throwable}{FATAL=magenta, ERROR=red, WARN=yellow, INFO=green, DEBUG=cyan, TRACE=blue}"/>
+    </Console>
+  </Appenders>
+  <Loggers>
+    <Logger name="com.reuters.rfa" level="warn"/>
+    <Root level="trace">
+      <AppenderRef ref="Console"/>
+    </Root>
+  </Loggers>
+</Configuration>
